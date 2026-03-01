@@ -1,9 +1,10 @@
 import os
 import asyncio
+import threading
 from telethon import TelegramClient, events, Button
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # --- 🛰 إحداثيات القيادة العليا ---
-# يتم سحب القيم تلقائياً من إعدادات البيئة (Environment Variables) في Render
 API_ID = int(os.environ.get('API_ID'))
 API_HASH = os.environ.get('API_HASH')
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -12,7 +13,19 @@ CHANNEL_ID = int(os.environ.get('CHANNEL_ID'))
 PASSWORD = os.environ.get('PASSWORD')
 CUSTOM_HTML_BASE = os.environ.get('CUSTOM_HTML_BASE')
 
-# إعداد البوت
+# --- 🌐 خادم ويب وهمي (لإبقاء الخدمة مستيقظة في Render) ---
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"System is Live")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    server.serve_forever()
+
+# --- إعداد البوت ---
 bot = TelegramClient('eljelad_session', API_ID, API_HASH)
 
 @bot.on(events.NewMessage)
@@ -53,7 +66,10 @@ async def eljelad_core(event):
             await event.respond(f"❌ خـلل في الـمنظومة: {str(e)}")
 
 async def main():
+    # تشغيل الخادم الوهمي في الخلفية
+    threading.Thread(target=run_web_server, daemon=True).start()
     await bot.start(bot_token=BOT_TOKEN)
+    print("المنظومة متصلة بنجاح!")
     await bot.run_until_disconnected()
 
 if __name__ == '__main__':
