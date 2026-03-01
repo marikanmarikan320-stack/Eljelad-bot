@@ -13,7 +13,7 @@ CHANNEL_ID = int(os.environ.get('CHANNEL_ID'))
 PASSWORD = os.environ.get('PASSWORD')
 CUSTOM_HTML_BASE = os.environ.get('CUSTOM_HTML_BASE')
 
-# --- 🌐 خادم ويب وهمي (لإبقاء الخدمة مستيقظة في Render) ---
+# --- 🌐 خادم ويب وهمي (لإصلاح خطأ Port Binding في Render) ---
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -21,6 +21,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"System is Live")
 
 def run_web_server():
+    # Render يمرر المنفذ تلقائياً عبر متغير بيئة يسمى PORT
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), SimpleHandler)
     server.serve_forever()
@@ -34,39 +35,22 @@ async def eljelad_core(event):
     sender = event.sender_id
     text = event.raw_text
 
-    # نظام التحقق من القائد
     if text == PASSWORD and sender == ADMIN_ID:
-        await event.respond("<b>🦅 سـيادة القـائد.. الـمنظومة مـستعدة لـتلقي الإحـداثيات وبـدء الـهجوم!</b>", parse_mode='html')
+        await event.respond("<b>🦅 سـيادة القـائد.. الـمنظومة مـستعدة!</b>", parse_mode='html')
         return
 
-    # استقبال الهدف وإرسال البلاغ للقناة
     if sender == ADMIN_ID and ("tiktok.com" in text or "http" in text):
         target_url = text.strip().split()[0]
         final_html_link = f"{CUSTOM_HTML_BASE}?target={target_url}"
-        
-        msg = (
-            "🌪 <b>إعـصـار جـيـش الـتـبـلـيـغ الـجـزائـري</b> 🌪\n"
-            "👤 <b>الـقـائد الـعـام:</b> الـجـلاد الـجـزائـري\n\n"
-            "🔥 <b>إلى أسُـود الـظـل والـخـفاء.. إلى صـقـور الـجـزاء الـضـارية</b> 🔥\n\n"
-            "⚠️ <b>صـدرت الأوامـر الـعـلـيـا لـلانـقـضاض والـقـصف الـشـامـل:</b>\n\n"
-            "👊 <b>يـا أسـود، اضربـوا ولا تـبـالـوا! زلـزلـوا هـواتـفـكم بـالـبـلاغات!</b>\n"
-            "حـطمـوا كـبـريـاء الـهـدف، ولا تـتـركوا لـه أثـراً.. الـنصر حـلـيـفـكم.\n\n"
-            "🇩🇿 <b>الـنـصر لـلـجـزائر.. الله أكـبـر!</b> 🇩🇿"
-        )
-
-        buttons = [
-            [Button.url("📍 اقـتـحام الـحساب وتـدمـيره", target_url)],
-            [Button.url("📧 قـصف جـوي (عـبر الـجيمـيل)", final_html_link)]
-        ]
-
+        msg = "🌪 <b>إعـصـار جـيـش الـتـبـلـيـغ الـجـزائـري</b> 🌪"
+        buttons = [[Button.url("📍 اقتحام", target_url)], [Button.url("📧 قصف", final_html_link)]]
         try:
             await bot.send_message(CHANNEL_ID, msg, buttons=buttons, link_preview=False, parse_mode='html')
-            await event.respond("🚀 <b>تـم إرسـال الأوامـر لـلجيش.. الـهدف مرصود في الواجهة الآن!</b>", parse_mode='html')
         except Exception as e:
-            await event.respond(f"❌ خـلل في الـمنظومة: {str(e)}")
+            print(f"Error: {e}")
 
 async def main():
-    # تشغيل الخادم الوهمي في الخلفية
+    # تشغيل الخادم الوهمي في خلفية الكود لإرضاء Render
     threading.Thread(target=run_web_server, daemon=True).start()
     await bot.start(bot_token=BOT_TOKEN)
     print("المنظومة متصلة بنجاح!")
