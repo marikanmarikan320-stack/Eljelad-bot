@@ -1,86 +1,71 @@
-import os
-import asyncio
-import threading
-from telethon import TelegramClient, events, Button
+import os, time, threading, io
+import yfinance as yf
+import pandas as pd
+import pandas_ta as ta
+import telebot
+import matplotlib.pyplot as plt
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# --- 🛰 إحداثيات القيادة العليا (مـنظومة جـيش الـتبليغ الـجزائري) ---
-API_ID = int(os.environ.get('API_ID'))
-API_HASH = os.environ.get('API_HASH')
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-ADMIN_ID = int(os.environ.get('ADMIN_ID'))
-CHANNEL_ID = int(os.environ.get('CHANNEL_ID'))
+# --- الإعدادات ---
+bot = telebot.TeleBot(os.environ.get('BOT_TOKEN'))
+CHAT_ID = os.environ.get('ADMIN_ID')
 PASSWORD = os.environ.get('PASSWORD')
-CUSTOM_HTML_BASE = os.environ.get('CUSTOM_HTML_BASE')
+is_authorized = False
 
-# --- 🌐 خادم الحفاظ على اليقظة (Web Server) ---
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"ALGERIAN REPORTING ARMY SYSTEM IS ONLINE")
+# --- خادم الحفاظ على النشاط (لضمان عدم نوم البوت) ---
+class KeepAliveHandler(BaseHTTPRequestHandler):
+    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"SYSTEM ACTIVE")
 
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    server.serve_forever()
+def run_keep_alive(): HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 8080))), KeepAliveHandler).serve_forever()
 
-# --- ⚔️ تشغيل محرك المنظومة ---
-bot = TelegramClient('eljelad_session', API_ID, API_HASH)
-
-@bot.on(events.NewMessage)
-async def eljelad_core(event):
-    if event.is_group: return
-    sender = event.sender_id
-    text = event.raw_text
-
-    # 🎖️ نداء التحقق من هوية القائد
-    if text == PASSWORD and sender == ADMIN_ID:
-        await event.respond("<b>🦅 سـيادة الـقائد الـعام (الـجلاد الـجزائري).. مـنظومة جـيش الـتبليغ الـجزائري مـستعدة لـسحق الأهداف وبـدء الـقصف الـشامل!</b>", parse_mode='html')
-        return
-
-    # 🚀 رصد الأهداف وإرسال البلاغ القتالي
-    if sender == ADMIN_ID and ("tiktok.com" in text or "http" in text):
-        target_url = text.strip().split()[0]
-        final_html_link = f"{CUSTOM_HTML_BASE}?target={target_url}"
-        
-        # 🌪️ الـرسالة الـحماسية لـلجنود
-        msg = (
-            "🌪️ <b>مـنظومة جـيش الـتبليغ الـجزائري</b> 🌪️\n"
-            "👤 <b>بـقيادة الـقائد:</b> الـجلاد الـجزائـري\n\n"
-            "🔥 <b>إلى أسُـود الـظـل وصـقـور الـجزائر الأبـرار..</b> 🔥\n\n"
-            "⚠️ <b>صـدرت الأوامـر الـعـلـيـا لـسحق هـذا الـهدف الـخائن:</b>\n\n"
-            "👊 <b>يـا أبطال، اقصفـوا بـلا رحـمة! زلـزلـوا الأرض بـبلاغاتكم!</b>\n"
-            "نـحن فـي مـهمة مـقدسة مـن أجـل وطننا الـحبيب ووفـاءً لـدمـاء شـهدائنا الأبـرار. لا تـتركوا لـلخونة أثـراً!\n\n"
-            "🛡️ <b>تـعليمات قـتالية هـامة لـلجنود:</b>\n"
-            "<b>┌───────────────────┐</b>\n"
-            "<b>⚠️ تـنبيه: يـجب إيـقاف خـيار (الـمتصفح الـداخلي) فـي إعـدادات تـيليجرام، لـكي تـفتح لـكم الـواجهة الـحربية فـي Chrome وتـعمل الـمنظومة بـكفاءة!</b>\n"
-            "<b>└───────────────────┘</b>\n\n"
-            "🇩🇿 <b>الـنـصر لـلـجـزائر.. الله أكـبـر!</b> 🇩🇿"
-        )
-
-        # 🔘 الأزرار الـقتالية
-        buttons = [
-            [Button.url("🚀 اقـصف الـهدف الآن (تـدمـير مباشر)", target_url)],
-            [Button.url("📧 انـتقال إلـى الـواجهة الـحربية الـشاملة", final_html_link)]
-        ]
-
-        try:
-            await bot.send_message(CHANNEL_ID, msg, buttons=buttons, link_preview=False, parse_mode='html')
-            # 📟 رد الـبوت لـتأكيد الإرسـال
-            await event.respond(f"✅ <b>تـم إرسـال الإحـداثيات لـلجيش! الـهدف مرصود فـي الـقناة الآن والـهجوم بـدأ يا سـيدي.</b>", parse_mode='html')
-        except Exception as e:
-            await event.respond(f"❌ <b>خـلل فـي تـوزيع الأوامـر:</b> {str(e)}")
-
-async def main():
-    # 🏁 تـفعيل الـخادم الـوهمي لـمنع الـخمول
-    threading.Thread(target=run_web_server, daemon=True).start()
+# --- استراتيجية الحيتان والتحليل المؤسسي ---
+def analyze_market():
+    # سحب بيانات الذهب مباشرة من السحابة
+    df = yf.download("GC=F", period="5d", interval="15m")
     
-    await bot.start(bot_token=BOT_TOKEN)
-    # 📢 رسـالة تـأكيد الاتـصال لـلقائد
-    await bot.send_message(ADMIN_ID, "🦅 <b>تـم تـفعيل مـحرك مـنظومة جـيش الـتبليغ الـجزائري.. نـحن فـي وضـع الاسـتعداد الـدائم!</b>", parse_mode='html')
-    print("System is Online and Waiting for Orders...")
-    await bot.run_until_disconnected()
+    # المؤشرات المؤسسية (حيتان السوق)
+    df['EMA200'] = ta.ema(df['Close'], length=200)
+    df['RSI'] = ta.rsi(df['Close'], length=14)
+    df['VWAP'] = ta.vwap(df['High'], df['Low'], df['Close'], df['Volume'])
+    
+    last = df.iloc[-1]
+    
+    # اتخاذ القرار
+    signal = "انتظار"
+    if last['Close'] > last['VWAP'] and last['Close'] > last['EMA200'] and last['RSI'] < 60:
+        signal = "🚀 شراء (تأكيد حيتان)"
+    elif last['Close'] < last['VWAP'] and last['Close'] < last['EMA200'] and last['RSI'] > 40:
+        signal = "📉 بيع (تأكيد حيتان)"
+    return signal, last
+
+# --- المنظومة الذاتية للتحكم ---
+def auto_engine():
+    bot.send_message(CHAT_ID, "🦅 <b>تم تشغيل منظومة القائد هاني دوحة.. في وضع القتال!</b>", parse_mode='HTML')
+    while True:
+        if 14 <= datetime.now().hour <= 21: # الفترة الأمريكية
+            # فلتر الأخبار (14:30)
+            if datetime.now().hour == 14 and 30 <= datetime.now().minute <= 40:
+                bot.send_message(CHAT_ID, "🚫 <b>أخبار عالمية، توقف آلي للحماية.</b>", parse_mode='HTML')
+                time.sleep(900)
+                continue
+            
+            signal, data = analyze_market()
+            if signal != "انتظار":
+                bot.send_message(CHAT_ID, f"🎯 <b>إشارة تداول:</b> {signal}\n💰 السعر: {data['Close']:.2f}", parse_mode='HTML')
+        time.sleep(900)
+
+@bot.message_handler(func=lambda m: not is_authorized)
+def auth(m):
+    global is_authorized
+    if m.text == PASSWORD:
+        is_authorized = True
+        welcome_msg = ("🦅 <b>أهلاً بك يا قائد هاني دوحة.. في بوتك الأسطوري لتداول الذهب!</b>\n\n"
+                       "أنت القائد الأعلى، أنت من يروض أسواق الذهب. المنظومة تعمل بكامل قوتها.")
+        bot.reply_to(m, welcome_msg, parse_mode='HTML')
+        threading.Thread(target=auto_engine, daemon=True).start()
+    else: bot.reply_to(m, "❌ كلمة سر خاطئة.")
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    threading.Thread(target=run_keep_alive, daemon=True).start()
+    bot.polling(none_stop=True)
