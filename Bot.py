@@ -1,45 +1,82 @@
 import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 import yfinance as yf
 import pandas as pd
+import pandas_ta as ta
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from datetime import datetime, timedelta
 
-# --- المتغيرات والإعدادات ---
-TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
-PASSWORD = 'YOUR_SECRET_PASSWORD'
+# --- الإعدادات والمتغيرات ---
+TOKEN = "ضغ_هنا_توكن_البوت"
+PASSWORD = "كلمة_السر_التي_اتفقنا_عليها"
+SYMBOL = "GC=F"  # رمز الذهب العالمي
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# --- دالة التحليل الفني العميق ---
+def analyze_market():
+    # جلب بيانات بأططر زمنية مختلفة
+    data_1h = yf.download(SYMBOL, period="5d", interval="1h")
+    
+    # حساب المؤشرات السبعة المشهورة (RSI, MACD, Bollinger Bands, EMA, Fibonacci, ATR, Stochastic)
+    data_1h.ta.rsi(length=14, append=True)
+    data_1h.ta.macd(append=True)
+    data_1h.ta.bbands(length=20, std=2, append=True)
+    data_1h.ta.ema(length=50, append=True)
+    
+    last = data_1h.iloc[-1]
+    rsi = last['RSI_14']
+    macd_h = last['MACDH_12_26_9']
+    close = last['Close']
+    ema = last['EMA_50']
+    
+    # تحديد الاتجاه والتشبع
+    signal = "انتظار ⏳"
+    lot = "0.01 (إدارة مخاطر صارمة)"
+    
+    if rsi < 30 and close > ema:
+        signal = "شراء قوي 🟢 (تشبع بيعي + اتجاه صاعد)"
+        lot = "0.02"
+    elif rsi > 70 and close < ema:
+        signal = "بيع قوي 🔴 (تشبع شرائي + اتجاه هابط)"
+        lot = "0.02"
+        
+    return {
+        "price": close,
+        "rsi": rsi,
+        "signal": signal,
+        "lot": lot,
+        "trend": "صاعد" if close > ema else "هابط"
+    }
+
+# --- الأوامر والرسائل ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحباً بك! أنا بوت التداول الخاص بك. أدخل كلمة السر للبدء.")
+    await update.message.reply_text("مرحباً بك يا هاني دوحه! 🫡\nالرجاء إدخال كلمة السر للولوج إلى النظام السيادي.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
+    text = update.message.text
     
-    if user_text == PASSWORD:
-        await update.message.reply_text("تم التحقق! أنت الآن متصل. أرسل 'stat' للحصول على التقرير.")
-    elif user_text == 'stat':
-        await send_report(update, context)
-    else:
-        await update.message.reply_text("كلمة سر خاطئة أو أمر غير معروف.")
-
-async def send_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # جلب بيانات الذهب (مثال)
-    ticker = "GC=F"
-    data = yf.download(ticker, period="1d", interval="1h")
-    
-    if not data.empty:
-        last_price = data['Close'].iloc[-1]
-        # منطق بسيط لاستراتيجية الحيتان (مقارنة السعر الحالي بمتوسط متحرك)
-        moving_avg = data['Close'].rolling(window=5).mean().iloc[-1]
+    if text == PASSWORD:
+        welcome_msg = (
+            "مرحباً بك أيها القائد هاني دوحه! 👑\n"
+            "أنا بوتك الخاص بالتداول في صفقات الذهب.\n"
+            "**'النجاح ليس نهائياً، والفشل ليس قاتلاً: إنها الشجاعة لمواصلة العمل هي التي تهم.'**\n"
+            "أنا جاهز لتحليل السوق لك الآن. أرسل 'stat' للتقرير."
+        )
+        await update.message.reply_text(welcome_msg, parse_mode='Markdown')
         
-        report = f"📊 تقرير الساعة:\nالسعر الحالي: {last_price:.2f}\n"
-        if last_price > moving_avg:
-            report += "💡 نصيحة: اتجاه صعودي (شراء محتمل)"
-        else:
-            report += "⚠️ نصيحة: اتجاه هبوطي (بيع محتمل)"
-        
-        await update.message.reply_text(report)
+    elif text.lower() == 'stat':
+        analysis = analyze_market()
+        report = (
+            f"📊 **تقرير القائد هاني (الذهب - 1H):**\n"
+            f"💰 السعر الحالي: {analysis['price']:.2f}\n"
+            f"📈 الاتجاه العام: {analysis['trend']}\n"
+            f"📉 مؤشر RSI: {analysis['rsi']:.2f}\n\n"
+            f"💡 **توجيه البوت:** {analysis['signal']}\n"
+            f"📏 اللوت المنصوح به: {analysis['lot']}\n"
+            f"🚀 نصيحة: التزم بإدارة رأس المال دائماً."
+        )
+        await update.message.reply_text(report, parse_mode='Markdown')
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
