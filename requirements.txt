@@ -1,9 +1,8 @@
-
+telethon
 pandas
+pandas_ta
 numpy
-yfinance
-pandas-ta
 requests
-python-telegram-bot
-beautifulsoup4
-schedule
+pytz
+matplotlib
+mplfinance
