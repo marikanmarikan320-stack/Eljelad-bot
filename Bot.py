@@ -1,65 +1,48 @@
+import logging
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 import yfinance as yf
-import pandas_ta as ta
 import pandas as pd
-import matplotlib.pyplot as plt
-import asyncio
-from telegram import Bot
-from datetime import datetime, timedelta
 
-# إعدادات البوت (يتم جلبها من Railway Variables)
-TOKEN = "YOUR_TOKEN" 
-CHAT_ID = "YOUR_CHAT_ID"
-bot = Bot(token=TOKEN)
+# --- المتغيرات والإعدادات ---
+TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+PASSWORD = 'YOUR_SECRET_PASSWORD'
 
-def get_advanced_analysis():
-    # جلب بيانات الذهب بدقة 15 دقيقة
-    df = yf.download("GC=F", period="1d", interval="15m", progress=False)
-    
-    # 1. تحليل الشموع اليابانية (استراتيجية دوجي والمطرقة)
-    df.ta.cdl_doji(append=True)
-    df.ta.cdl_hammer(append=True)
-    
-    # 2. مؤشرات الزخم (RSI) والاتجاه (MACD)
-    df.ta.rsi(length=14, append=True)
-    df.ta.macd(append=True)
-    
-    # 3. حساب القاع والقمة لليوم الحالي
-    daily_high = df['High'].max()
-    daily_low = df['Low'].min()
-    
-    # توليد صورة (سكرين شوت) للتحليل
-    plt.figure(figsize=(10, 5))
-    df['Close'].plot(title="تحليل الذهب الحي")
-    plt.savefig('chart.png')
-    
-    return df.iloc[-1], daily_high, daily_low
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-async def send_status(update=False):
-    last_candle, h, l = get_advanced_analysis()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("مرحباً بك! أنا بوت التداول الخاص بك. أدخل كلمة السر للبدء.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_text = update.message.text
     
-    # منطق الاستراتيجية (دمج المؤشرات لاتخاذ القرار)
-    decision = "انتظار تأكيد..."
-    if last_candle['RSI_14'] < 30 and last_candle['MACD_12_26_9'] > 0:
-        decision = "🚀 فرصة شراء قوية (استراتيجية الحيتان)"
-    elif last_candle['RSI_14'] > 70:
-        decision = "📉 فرصة بيع (تشبع شرائي)"
+    if user_text == PASSWORD:
+        await update.message.reply_text("تم التحقق! أنت الآن متصل. أرسل 'stat' للحصول على التقرير.")
+    elif user_text == 'stat':
+        await send_report(update, context)
+    else:
+        await update.message.reply_text("كلمة سر خاطئة أو أمر غير معروف.")
 
-    msg = (f"📊 تقرير التداول اللحظي:\n"
-           f"السعر الحالي: {last_candle['Close']:.2f}\n"
-           f"القمة اليومية: {h:.2f} | القاع اليومي: {l:.2f}\n"
-           f"القرار الفني: {decision}\n"
-           f"الوقت: {datetime.now().strftime('%H:%M')}")
+async def send_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # جلب بيانات الذهب (مثال)
+    ticker = "GC=F"
+    data = yf.download(ticker, period="1d", interval="1h")
     
-    await bot.send_message(chat_id=CHAT_ID, text=msg)
-    await bot.send_photo(chat_id=CHAT_ID, photo=open('chart.png', 'rb'))
+    if not data.empty:
+        last_price = data['Close'].iloc[-1]
+        # منطق بسيط لاستراتيجية الحيتان (مقارنة السعر الحالي بمتوسط متحرك)
+        moving_avg = data['Close'].rolling(window=5).mean().iloc[-1]
+        
+        report = f"📊 تقرير الساعة:\nالسعر الحالي: {last_price:.2f}\n"
+        if last_price > moving_avg:
+            report += "💡 نصيحة: اتجاه صعودي (شراء محتمل)"
+        else:
+            report += "⚠️ نصيحة: اتجاه هبوطي (بيع محتمل)"
+        
+        await update.message.reply_text(report)
 
-async def main():
-    while True:
-        # مراسلة دورية كل 15 دقيقة في الفترة الأمريكية
-        now = datetime.now()
-        if 13 <= now.hour < 21:
-            await send_status()
-        await asyncio.sleep(900)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    app.run_polling()
