@@ -1,3 +1,9 @@
-yfinance
+
 pandas
-pyTelegramBotAPI
+numpy
+yfinance
+pandas-ta
+requests
+python-telegram-bot
+beautifulsoup4
+schedule
