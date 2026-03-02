@@ -1,51 +1,65 @@
 import yfinance as yf
 import pandas_ta as ta
 import pandas as pd
+import matplotlib.pyplot as plt
 import asyncio
 from telegram import Bot
-from datetime import datetime
-import time
+from datetime import datetime, timedelta
 
-# إعدادات البوت
-TOKEN = "أدخل_توكن_البوت_الخاص_بك_هنا"
-CHAT_ID = "أدخل_معرف_محادثتك_هنا"
+# إعدادات البوت (يتم جلبها من Railway Variables)
+TOKEN = "YOUR_TOKEN" 
+CHAT_ID = "YOUR_CHAT_ID"
 bot = Bot(token=TOKEN)
 
-# استراتيجية تحليل الحيتان والشموع
-def analyze_market():
-    symbol = "GC=F" # الذهب
-    data = yf.download(symbol, period="1d", interval="15m")
+def get_advanced_analysis():
+    # جلب بيانات الذهب بدقة 15 دقيقة
+    df = yf.download("GC=F", period="1d", interval="15m", progress=False)
     
-    # استخدام pandas_ta للمؤشرات القوية
-    data.ta.rsi(length=14, append=True)
-    data.ta.macd(append=True)
+    # 1. تحليل الشموع اليابانية (استراتيجية دوجي والمطرقة)
+    df.ta.cdl_doji(append=True)
+    df.ta.cdl_hammer(append=True)
     
-    last_row = data.iloc[-1]
+    # 2. مؤشرات الزخم (RSI) والاتجاه (MACD)
+    df.ta.rsi(length=14, append=True)
+    df.ta.macd(append=True)
     
-    # منطق الفلترة: هنا تضع شروط الاستراتيجيات السبع (مثلاً RSI < 30)
-    signal = "انتظار إشارة قوية..."
-    if last_row['RSI_14'] < 30:
-        signal = "⚠️ إشارة شراء قوية (تشبع بيعي) - استراتيجية الحيتان"
-    elif last_row['RSI_14'] > 70:
-        signal = "⚠️ إشارة بيع قوية (تشبع شرائي)"
-        
-    return f"تقرير التداول:\nالسعر: {last_row['Close']:.2f}\nالتحليل: {signal}\nالوقت: {datetime.now().strftime('%H:%M')}"
+    # 3. حساب القاع والقمة لليوم الحالي
+    daily_high = df['High'].max()
+    daily_low = df['Low'].min()
+    
+    # توليد صورة (سكرين شوت) للتحليل
+    plt.figure(figsize=(10, 5))
+    df['Close'].plot(title="تحليل الذهب الحي")
+    plt.savefig('chart.png')
+    
+    return df.iloc[-1], daily_high, daily_low
 
-async def send_report():
-    report = analyze_market()
-    await bot.send_message(chat_id=CHAT_ID, text=f"👋 أهلاً بك هاني!\n\n{report}")
+async def send_status(update=False):
+    last_candle, h, l = get_advanced_analysis()
+    
+    # منطق الاستراتيجية (دمج المؤشرات لاتخاذ القرار)
+    decision = "انتظار تأكيد..."
+    if last_candle['RSI_14'] < 30 and last_candle['MACD_12_26_9'] > 0:
+        decision = "🚀 فرصة شراء قوية (استراتيجية الحيتان)"
+    elif last_candle['RSI_14'] > 70:
+        decision = "📉 فرصة بيع (تشبع شرائي)"
 
-# الدورة التكرارية (كل 15 دقيقة)
+    msg = (f"📊 تقرير التداول اللحظي:\n"
+           f"السعر الحالي: {last_candle['Close']:.2f}\n"
+           f"القمة اليومية: {h:.2f} | القاع اليومي: {l:.2f}\n"
+           f"القرار الفني: {decision}\n"
+           f"الوقت: {datetime.now().strftime('%H:%M')}")
+    
+    await bot.send_message(chat_id=CHAT_ID, text=msg)
+    await bot.send_photo(chat_id=CHAT_ID, photo=open('chart.png', 'rb'))
+
 async def main():
     while True:
-        # الفلترة الزمنية (الفترة الأمريكية تقريباً من 13:30 إلى 20:00 بتوقيت جرينتش)
+        # مراسلة دورية كل 15 دقيقة في الفترة الأمريكية
         now = datetime.now()
-        if 13 <= now.hour < 21: 
-            await send_report()
-        else:
-            print("خارج نطاق الفترة الأمريكية - وضع السكون")
-        
-        await asyncio.sleep(900) # 15 دقيقة بالثواني
+        if 13 <= now.hour < 21:
+            await send_status()
+        await asyncio.sleep(900)
 
 if __name__ == "__main__":
     asyncio.run(main())
