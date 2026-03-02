@@ -1,30 +1,51 @@
 import yfinance as yf
 import pandas_ta as ta
 import pandas as pd
-from telegram.ext import ApplicationBuilder
+import asyncio
+from telegram import Bot
+from datetime import datetime
+import time
 
-# 1. جلب بيانات الذهب
-def get_gold_data(interval='5m'):
-    gold = yf.Ticker("GC=F")
-    data = gold.history(period="1d", interval=interval)
-    return data
+# إعدادات البوت
+TOKEN = "أدخل_توكن_البوت_الخاص_بك_هنا"
+CHAT_ID = "أدخل_معرف_محادثتك_هنا"
+bot = Bot(token=TOKEN)
 
-# 2. تحليل الاستراتيجيات والشموع
-def analyze_market(data):
-    # إضافة مؤشرات التحليل الفني (الشموع والمؤشرات)
+# استراتيجية تحليل الحيتان والشموع
+def analyze_market():
+    symbol = "GC=F" # الذهب
+    data = yf.download(symbol, period="1d", interval="15m")
+    
+    # استخدام pandas_ta للمؤشرات القوية
     data.ta.rsi(length=14, append=True)
-    data.ta.ema(length=50, append=True)
+    data.ta.macd(append=True)
     
-    # هنا يتم تطبيق الاستراتيجيات السبع (مثلاً تقاطع المتوسطات، التشبع البيعي/الشرائي)
     last_row = data.iloc[-1]
-    return f"سعر الذهب الحالي: {last_row['Close']}"
-
-# 3. التشغيل الرئيسي
-async def main():
-    # هنا يتم ربط البوت بتيليجرام
-    print("البوت يعمل ويحلل البيانات...")
-    # إضافة كود الربط بالتوكن من متغيرات البيئة في Railway
     
+    # منطق الفلترة: هنا تضع شروط الاستراتيجيات السبع (مثلاً RSI < 30)
+    signal = "انتظار إشارة قوية..."
+    if last_row['RSI_14'] < 30:
+        signal = "⚠️ إشارة شراء قوية (تشبع بيعي) - استراتيجية الحيتان"
+    elif last_row['RSI_14'] > 70:
+        signal = "⚠️ إشارة بيع قوية (تشبع شرائي)"
+        
+    return f"تقرير التداول:\nالسعر: {last_row['Close']:.2f}\nالتحليل: {signal}\nالوقت: {datetime.now().strftime('%H:%M')}"
+
+async def send_report():
+    report = analyze_market()
+    await bot.send_message(chat_id=CHAT_ID, text=f"👋 أهلاً بك هاني!\n\n{report}")
+
+# الدورة التكرارية (كل 15 دقيقة)
+async def main():
+    while True:
+        # الفلترة الزمنية (الفترة الأمريكية تقريباً من 13:30 إلى 20:00 بتوقيت جرينتش)
+        now = datetime.now()
+        if 13 <= now.hour < 21: 
+            await send_report()
+        else:
+            print("خارج نطاق الفترة الأمريكية - وضع السكون")
+        
+        await asyncio.sleep(900) # 15 دقيقة بالثواني
+
 if __name__ == "__main__":
-    # تشغيل التحليل الدوري
-    pass
+    asyncio.run(main())
