@@ -1,7 +1,4 @@
-telethon
-
 yfinance
 pandas
-pandas_ta
+pandas-ta
 pyTelegramBotAPI
-matplotlib
