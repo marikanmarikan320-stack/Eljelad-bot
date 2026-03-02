@@ -1,228 +1,196 @@
 import os
-import asyncio
-import requests
+import telebot
+import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
-import pytz
-import sqlite3
-import hmac
+import ta
+import threading
+import time
 import hashlib
-import mplfinance as mpf
-from datetime import datetime, timedelta
-from telethon import TelegramClient, events
+import requests
+from datetime import datetime
 
-# =========================
-# 🔐 ENV
-# =========================
-
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-MARKET_API = os.getenv("MARKET_API")
-SECRET_KEY = os.getenv("SECRET_KEY")
+TOKEN = os.getenv("BOT_TOKEN")
+PASSWORD = os.getenv("BOT_PASSWORD")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-PASSWORD = os.getenv("PASSWORD")
-NEWS_API = os.getenv("NEWS_API")
 
-bot = TelegramClient("gold_master_bot", API_ID, API_HASH)
+bot = telebot.TeleBot(TOKEN)
 
-AUTHORIZED = False
+active_users = {}
+licensed_users = {}
 
-# =========================
-# 🗄 DATABASE
-# =========================
+# =============================
+# 🔐 LICENSE SYSTEM (LIFETIME)
+# =============================
+def generate_license(user_id):
+    raw = f"{user_id}-INSTITUTIONAL-GOLD-2026"
+    return hashlib.sha256(raw.encode()).hexdigest()[:30]
 
-conn = sqlite3.connect("users.db")
-c = conn.cursor()
-c.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, token TEXT)")
-conn.commit()
-
-def generate_token(user_id):
-    return hmac.new(SECRET_KEY.encode(), str(user_id).encode(), hashlib.sha256).hexdigest()
-
-# =========================
-# 🕒 SESSION FILTER
-# =========================
-
-def is_us_session():
-    tz = pytz.timezone("America/New_York")
-    now = datetime.now(tz)
-    return 7 <= now.hour <= 17
-
-# =========================
-# 📰 NEWS FILTER
-# =========================
-
-def high_impact_news():
-    try:
-        url=f"https://newsapi.org/v2/everything?q=USD&apiKey={NEWS_API}"
-        r=requests.get(url).json()
-        return False
-    except:
-        return False
-
-# =========================
+# =============================
 # 📊 FETCH DATA
-# =========================
-
+# =============================
 def get_data(interval):
-    url=f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={interval}&apikey={MARKET_API}&outputsize=200"
-    r=requests.get(url).json()
-    if "values" not in r:
-        return None
-    df=pd.DataFrame(r["values"])
-    df=df.rename(columns={"datetime":"Date","open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
-    df["Date"]=pd.to_datetime(df["Date"])
-    df=df.set_index("Date")
-    df=df.astype(float)
-    df=df.sort_index()
+    df = yf.download("XAUUSD=X", interval=interval, period="5d", progress=False)
     return df
 
-# =========================
-# 📈 ANALYSIS ENGINE
-# =========================
+# =============================
+# 🕯 CANDLESTICK PATTERNS
+# =============================
+def detect_candles(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-def analyze(df):
-    df["EMA50"]=ta.ema(df["Close"],50)
-    df["EMA200"]=ta.ema(df["Close"],200)
-    df["RSI"]=ta.rsi(df["Close"],14)
-    df["ATR"]=ta.atr(df["High"],df["Low"],df["Close"],14)
-    df["ADX"]=ta.adx(df["High"],df["Low"],df["Close"],14)["ADX_14"]
+    body = abs(last["Close"] - last["Open"])
+    candle_range = last["High"] - last["Low"]
 
-    last=df.iloc[-1]
-    prev=df.iloc[-2]
+    patterns = []
 
-    trend="Bullish" if last["EMA50"]>last["EMA200"] else "Bearish"
-    strong=last["ADX"]>20
-    volatility=last["ATR"]>1
-    bos_up=last["High"]>prev["High"]
-    bos_down=last["Low"]<prev["Low"]
+    if prev["Close"] < prev["Open"] and last["Close"] > last["Open"] and last["Close"] > prev["Open"]:
+        patterns.append("Bullish Engulfing")
+    if prev["Close"] > prev["Open"] and last["Close"] < last["Open"] and last["Close"] < prev["Open"]:
+        patterns.append("Bearish Engulfing")
+    if body < candle_range * 0.3:
+        patterns.append("Pin Bar")
+    if body < candle_range * 0.1:
+        patterns.append("Doji")
+    return patterns
 
-    signal="WAIT"
+# =============================
+# 📈 MARKET STRUCTURE
+# =============================
+def market_structure(df):
+    highs = df["High"].rolling(5).max()
+    lows = df["Low"].rolling(5).min()
+    last_high = highs.iloc[-1]
+    prev_high = highs.iloc[-2]
+    last_low = lows.iloc[-1]
+    prev_low = lows.iloc[-2]
+    if last_high > prev_high:
+        return "Bullish"
+    elif last_low < prev_low:
+        return "Bearish"
+    else:
+        return "Range"
 
-    if trend=="Bullish" and strong and volatility and bos_up and last["RSI"]<70:
-        signal="BUY"
-    elif trend=="Bearish" and strong and volatility and bos_down and last["RSI"]>30:
-        signal="SELL"
+# =============================
+# 📊 FULL ANALYSIS
+# =============================
+def analyze(interval):
+    df = get_data(interval)
+    df["EMA50"] = ta.trend.ema_indicator(df["Close"], window=50)
+    df["EMA200"] = ta.trend.ema_indicator(df["Close"], window=200)
+    df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
+    last = df.iloc[-1]
 
-    return signal,trend,last
+    buy_score = 0
+    sell_score = 0
 
-# =========================
-# 📊 MULTI TF ANALYSIS
-# =========================
+    if last["EMA50"] > last["EMA200"]:
+        buy_score += 1
+    else:
+        sell_score += 1
+    if last["RSI"] < 40:
+        buy_score += 1
+    elif last["RSI"] > 60:
+        sell_score += 1
 
-def multi_timeframe_analysis():
+    structure = market_structure(df)
+    candles = detect_candles(df)
 
-    timeframes=["5min","15min","1h","4h","1day"]
-    results={}
+    if "Bullish Engulfing" in candles:
+        buy_score += 2
+    if "Bearish Engulfing" in candles:
+        sell_score += 2
+    if structure == "Bullish":
+        buy_score += 1
+    elif structure == "Bearish":
+        sell_score += 1
 
-    for tf in timeframes:
-        df=get_data(tf)
-        if df is None:
-            return None
-        signal,trend,last=analyze(df)
-        results[tf]={"signal":signal,"trend":trend,"price":last["Close"]}
+    return buy_score, sell_score, last["Close"], candles, structure
 
-    return results
-
-# =========================
-# 📷 CHART
-# =========================
-
-def create_chart(df):
-    file="chart.png"
-    mpf.plot(df.tail(100),type="candle",style="yahoo",savefig=file)
-    return file
-
-# =========================
-# 🤖 COMMANDS
-# =========================
-
-@bot.on(events.NewMessage(pattern="/start"))
-async def start(event):
-    await event.respond("🦅 مرحبا يا هاني، البوت يعمل الآن.\nأدخل كلمة السر لتفعيله.")
-
-@bot.on(events.NewMessage)
-async def handler(event):
-
-    global AUTHORIZED
-
-    if event.sender_id!=ADMIN_ID:
-        return
-
-    text=event.raw_text.strip()
-
-    if text==PASSWORD:
-        AUTHORIZED=True
-        await event.respond("🔥 مرحبا بك يا قائد هاني دوحة.\nالبوت المؤسسي بدأ العمل.")
-        return
-
-    if text.lower()=="report" and AUTHORIZED:
-
-        results=multi_timeframe_analysis()
-        if results is None:
-            await event.respond("API Limit reached.")
-            return
-
-        summary="📊 تقرير شامل متعدد الفريمات:\n\n"
-
-        buy_count=0
-        sell_count=0
-
-        for tf,data in results.items():
-            summary+=f"{tf} → {data['trend']} | {data['signal']} | السعر {data['price']}\n"
-            if data["signal"]=="BUY":
-                buy_count+=1
-            if data["signal"]=="SELL":
-                sell_count+=1
-
-        final="WAIT"
-        if buy_count>=3:
-            final="BUY"
-        elif sell_count>=3:
-            final="SELL"
-
-        summary+=f"\n🎯 القرار النهائي: {final}"
-
-        df=get_data("15min")
-        chart=create_chart(df)
-
-        await bot.send_file(ADMIN_ID,chart,caption=summary)
-
-# =========================
-# ⏰ AUTO LOOP
-# =========================
-
-async def auto_loop():
-
+# =============================
+# 🚨 SIGNAL ENGINE
+# =============================
+def check_market():
     while True:
+        try:
+            intervals = ["15m", "1h", "4h"]
+            total_buy = 0
+            total_sell = 0
+            price = 0
+            candle_info = []
+            structure_info = []
 
-        if AUTHORIZED and is_us_session():
+            for tf in intervals:
+                buy, sell, price, candles, structure = analyze(tf)
+                total_buy += buy
+                total_sell += sell
+                candle_info += candles
+                structure_info.append(structure)
 
-            if high_impact_news():
-                await bot.send_message(ADMIN_ID,"⚠ خبر اقتصادي قوي قادم.\nالتداول متوقف مؤقتاً.")
-                await asyncio.sleep(1800)
-                continue
+            total = total_buy + total_sell
+            strength = max(total_buy, total_sell) / total
 
-            results=multi_timeframe_analysis()
-            if results:
-                buy=sum(1 for tf in results if results[tf]["signal"]=="BUY")
-                sell=sum(1 for tf in results if results[tf]["signal"]=="SELL")
+            if strength >= 0.7:
+                direction = "BUY" if total_buy > total_sell else "SELL"
+                report = f"""
+🏦 INSTITUTIONAL GOLD REPORT
 
-                if buy>=3 or sell>=3:
-                    decision="BUY" if buy>sell else "SELL"
-                    await bot.send_message(ADMIN_ID,f"🚨 إشارة قوية: {decision}")
+السعر: {price}
+الاتجاه: {direction}
+قوة الإشارة: {round(strength*100,2)}%
 
-        await asyncio.sleep(900)
+هيكل السوق:
+{structure_info}
 
-# =========================
-# 🚀 RUN
-# =========================
+نماذج الشموع:
+{set(candle_info)}
 
-async def main():
-    await bot.start(bot_token=BOT_TOKEN)
-    await bot.send_message(ADMIN_ID,"✅ تم تشغيل البوت بنجاح.\nأدخل /start.")
-    asyncio.create_task(auto_loop())
-    await bot.run_until_disconnected()
+التوقيت: {datetime.utcnow()}
 
-asyncio.run(main())
+⚠️ استخدم إدارة رأس مال احترافية
+"""
+                for user in active_users:
+                    if active_users[user]:
+                        bot.send_message(user, report)
+            time.sleep(300)
+        except:
+            time.sleep(60)
+
+# =============================
+# 🤖 TELEGRAM SYSTEM
+# =============================
+@bot.message_handler(commands=["start"])
+def start(message):
+    bot.send_message(message.chat.id, "🔐 ادخل كلمة السر")
+
+@bot.message_handler(commands=["generate"])
+def generate(message):
+    if message.from_user.id == ADMIN_ID:
+        try:
+            user_id = int(message.text.split()[1])
+            code = generate_license(user_id)
+            licensed_users[user_id] = code
+            bot.send_message(message.chat.id, f"كود التفعيل مدى الحياة:\n{code}")
+        except:
+            bot.send_message(message.chat.id, "استخدم /generate USER_ID")
+
+@bot.message_handler(func=lambda m: True)
+def verify(message):
+    user_id = message.from_user.id
+    if user_id in active_users and active_users[user_id]:
+        return
+    if message.text == PASSWORD:
+        bot.send_message(user_id, "✅ ادخل كود التفعيل")
+        active_users[user_id] = False
+        return
+    if user_id in licensed_users and message.text == licensed_users[user_id]:
+        active_users[user_id] = True
+        bot.send_message(user_id, "🚀 تم تفعيل النسخة المؤسسية مدى الحياة")
+    else:
+        bot.send_message(user_id, "❌ البيانات غير صحيحة")
+
+# =============================
+# 🚀 START
+# =============================
+threading.Thread(target=check_market).start()
+bot.polling(none_stop=True)
