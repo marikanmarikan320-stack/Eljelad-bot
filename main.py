@@ -1,251 +1,126 @@
-import os  # التعامل مع المتغيرات البيئية
-import telebot  # التفاعل مع Telegram API
-import yfinance as yf  # جلب أسعار الذهب من Yahoo Finance
-import pandas as pd  # التعامل مع البيانات في DataFrame
-import ta  # مؤشرات التحليل الفني
-import threading  # تشغيل التحليل بشكل مستقل
-import time  # التحكم في وقت الانتظار بين التحليلات
-import hashlib  # توليد أكواد تفعيل مشفرة
-from datetime import datetime  # التعامل مع التواريخ
+import os
+import time
+import asyncio
+from market_engine import MarketEngine
+from analysis_engine import AnalysisEngine
+from ai_engine import AIEngine
+from telegram_bot import TelegramEngine
 
-# -------------------------
-# 1️⃣ المتغيرات البيئية
-# -------------------------
-TOKEN = os.getenv("BOT_TOKEN")  # توكن البوت
-PASSWORD = os.getenv("BOT_PASSWORD")  # كلمة السر لتفعيل البوت
-ADMIN_ID = int(os.getenv("ADMIN_ID"))  # رقم Telegram الخاص بك للتحكم
+BOT_NAME = "Hani Gold"
+LEADER = "القائد هاني دوحه"
 
-bot = telebot.TeleBot(TOKEN)
+OANDA_API_KEY = os.getenv("OANDA_API_KEY")
+OANDA_ACCOUNT = os.getenv("OANDA_ACCOUNT")
 
-active_users = {}  # المستخدمين المفعلين
-licensed_users = {}  # المستخدمين المرخص لهم
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# -------------------------
-# 2️⃣ نظام التفعيل مدى الحياة
-# -------------------------
-def generate_license(user_id):
-    """
-    توليد كود تفعيل مشفر مرتبط بالـ Telegram ID
-    لضمان اشتراك مدى الحياة
-    """
-    raw = f"{user_id}-INSTITUTIONAL-GOLD-2026"
-    return hashlib.sha256(raw.encode()).hexdigest()[:30]
+AI_API_KEY = os.getenv("AI_API_KEY")
 
-# -------------------------
-# 3️⃣ جلب بيانات الذهب
-# -------------------------
-def get_data(interval):
-    """
-    تحميل بيانات XAUUSD (الذهب بالدولار)
-    على الفريم المطلوب (5m, 15m, 1h, 4h, 1d)
-    """
-    df = yf.download("XAUUSD=X", interval=interval, period="5d", progress=False)
-    return df
+symbol = "XAU_USD"
 
-# -------------------------
-# 4️⃣ تحليل الشموع اليابانية
-# -------------------------
-def detect_candles(df):
-    """
-    التعرف على أهم نماذج الشموع اليابانية:
-    - Bullish Engulfing
-    - Bearish Engulfing
-    - Pin Bar
-    - Doji
-    """
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    body = abs(last["Close"] - last["Open"])
-    candle_range = last["High"] - last["Low"]
-    patterns = []
+market = MarketEngine(OANDA_API_KEY, OANDA_ACCOUNT)
+analysis = AnalysisEngine()
+ai = AIEngine(AI_API_KEY)
+telegram = TelegramEngine(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
 
-    if prev["Close"] < prev["Open"] and last["Close"] > last["Open"] and last["Close"] > prev["Open"]:
-        patterns.append("Bullish Engulfing")
-    if prev["Close"] > prev["Open"] and last["Close"] < last["Open"] and last["Close"] < prev["Open"]:
-        patterns.append("Bearish Engulfing")
-    if body < candle_range * 0.3:
-        patterns.append("Pin Bar")
-    if body < candle_range * 0.1:
-        patterns.append("Doji")
-    return patterns
 
-# -------------------------
-# 5️⃣ تحليل هيكل السوق
-# -------------------------
-def market_structure(df):
-    """
-    تحليل هيكل السوق لمعرفة الاتجاه العام
-    - Bullish (صعود)
-    - Bearish (هبوط)
-    - Range (تذبذب)
-    """
-    highs = df["High"].rolling(5).max()
-    lows = df["Low"].rolling(5).min()
-    last_high = highs.iloc[-1]
-    prev_high = highs.iloc[-2]
-    last_low = lows.iloc[-1]
-    prev_low = lows.iloc[-2]
+async def startup_message():
 
-    if last_high > prev_high:
-        return "Bullish"
-    elif last_low < prev_low:
-        return "Bearish"
-    else:
-        return "Range"
+    message = f"""
+🚀 مرحباً بك في بوت
 
-# -------------------------
-# 6️⃣ التحليل الكامل لكل فريم
-# -------------------------
-def analyze(interval):
-    """
-    دمج كل التحليلات: مؤشرات، هيكل السوق، شموع
-    وتوليد نقاط شراء/بيع لتقييم قوة الإشارة
-    """
-    df = get_data(interval)
-    df["EMA50"] = ta.trend.ema_indicator(df["Close"], window=50)
-    df["EMA200"] = ta.trend.ema_indicator(df["Close"], window=200)
-    df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
+{BOT_NAME}
 
-    last = df.iloc[-1]
+👑 بإدارة {LEADER}
 
-    buy_score = 0
-    sell_score = 0
+🎯 أهداف البوت:
 
-    # استراتيجية EMA50/EMA200
-    if last["EMA50"] > last["EMA200"]:
-        buy_score += 1
-    else:
-        sell_score += 1
+تحليل سوق الذهب مقابل الدولار
 
-    # استراتيجية RSI
-    if last["RSI"] < 40:
-        buy_score += 1
-    elif last["RSI"] > 60:
-        sell_score += 1
+📊 الاستراتيجيات:
 
-    structure = market_structure(df)
-    candles = detect_candles(df)
+EMA
+RSI
+MACD
+Bollinger Bands
+ATR
+Volume
+Smart Money
+Liquidity
+Breakout
+Candlestick Patterns
 
-    # إضافة قوة الإشارة بناء على الشموع
-    if "Bullish Engulfing" in candles:
-        buy_score += 2
-    if "Bearish Engulfing" in candles:
-        sell_score += 2
+🤖 الذكاء الاصطناعي
 
-    # إضافة قوة الإشارة بناء على هيكل السوق
-    if structure == "Bullish":
-        buy_score += 1
-    elif structure == "Bearish":
-        sell_score += 1
+LSTM
+XGBoost
+Random Forest
 
-    return buy_score, sell_score, last["Close"], candles, structure
+⚡ المزايا
 
-# -------------------------
-# 7️⃣ إرسال تقرير كل 15 دقيقة
-# -------------------------
-def signal_loop():
-    while True:
-        try:
-            intervals = ["5m", "15m", "1h", "4h", "1d"]
-            total_buy = 0
-            total_sell = 0
-            price = 0
-            candle_info = []
-            structure_info = []
+تحليل متعدد الفريمات
+تنبيهات فورية
+تقارير كل 10 دقائق
+فلتر أخبار
+مراقبة السيولة
 
-            for tf in intervals:
-                buy, sell, price, candles, structure = analyze(tf)
-                total_buy += buy
-                total_sell += sell
-                candle_info += candles
-                structure_info.append(f"{tf}: {structure}")
-
-            total = total_buy + total_sell
-            strength = max(total_buy, total_sell) / total if total != 0 else 0
-
-            if strength >= 0.7:
-                direction = "BUY" if total_buy > total_sell else "SELL"
-                report = f"""
-🏦 INSTITUTIONAL GOLD REPORT
-
-السعر الحالي: {price}
-الاتجاه: {direction}
-قوة الإشارة: {round(strength*100,2)}%
-
-هيكل السوق:
-{structure_info}
-
-نماذج الشموع:
-{set(candle_info)}
-
-⏰ التوقيت: {datetime.utcnow()}
-
-⚠️ استخدم إدارة رأس مال احترافية
+بالتوفيق في التداول 📈
 """
-                for user in active_users:
-                    if active_users[user]:
-                        bot.send_message(user, report)
 
-            # إرسال التقرير كل 15 دقيقة
-            time.sleep(900)
+    await telegram.send(message)
+
+
+async def main():
+
+    await startup_message()
+
+    await market.initialize_database()
+
+    candles = await market.download_initial_candles(symbol)
+
+    while True:
+
+        try:
+
+            data = await market.update_live_candles(symbol)
+
+            indicators = analysis.calculate_indicators(data)
+
+            patterns = analysis.detect_candles(data)
+
+            signal = ai.generate_signal(indicators, patterns)
+
+            if signal:
+
+                message = f"""
+
+🚨 فرصة تداول
+
+الزوج: XAUUSD
+
+الإشارة: {signal['type']}
+
+الدخول: {signal['entry']}
+
+TP: {signal['tp']}
+
+SL: {signal['sl']}
+
+الثقة: {signal['confidence']}
+
+"""
+
+                await telegram.send(message)
+
+            await asyncio.sleep(5)
 
         except Exception as e:
-            print("Error in signal loop:", e)
-            time.sleep(60)
 
-# -------------------------
-# 8️⃣ أوامر Telegram للمستخدم
-# -------------------------
-@bot.message_handler(commands=["start"])
-def start(message):
-    bot.send_message(message.chat.id, "🔐 ادخل كلمة السر")
+            print("error", e)
+            time.sleep(10)
 
-@bot.message_handler(commands=["generate"])
-def generate(message):
-    if message.from_user.id == ADMIN_ID:
-        try:
-            user_id = int(message.text.split()[1])
-            code = generate_license(user_id)
-            licensed_users[user_id] = code
-            bot.send_message(message.chat.id, f"كود التفعيل مدى الحياة:\n{code}")
-        except:
-            bot.send_message(message.chat.id, "استخدم /generate USER_ID")
 
-@bot.message_handler(commands=["price"])
-def get_price(message):
-    df = get_data("1m")
-    last = df.iloc[-1]["Close"]
-    bot.send_message(message.chat.id, f"💰 السعر اللحظي للذهب: {last}")
+if __name__ == "__main__":
 
-@bot.message_handler(commands=["stats"])
-def get_stats(message):
-    report = ""
-    intervals = ["5m", "15m", "1h", "4h", "1d"]
-    for tf in intervals:
-        buy, sell, price, candles, structure = analyze(tf)
-        report += f"{tf}: Buy {buy}, Sell {sell}, هيكل {structure}, شموع {set(candles)}\n"
-    bot.send_message(message.chat.id, f"📊 إحصائيات التحليل:\n{report}")
-
-@bot.message_handler(func=lambda m: True)
-def verify(message):
-    user_id = message.from_user.id
-
-    if user_id in active_users and active_users[user_id]:
-        return
-
-    if message.text == PASSWORD:
-        bot.send_message(user_id, "✅ ادخل كود التفعيل")
-        active_users[user_id] = False
-        return
-
-    if user_id in licensed_users and message.text == licensed_users[user_id]:
-        active_users[user_id] = True
-        bot.send_message(user_id, "🚀 تم تفعيل النسخة المؤسسية مدى الحياة")
-    else:
-        bot.send_message(user_id, "❌ البيانات غير صحيحة")
-
-# -------------------------
-# 9️⃣ تشغيل البوت
-# -------------------------
-threading.Thread(target=signal_loop).start()
-bot.polling(none_stop=True)
+    asyncio.run(main())
